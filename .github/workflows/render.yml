@@ -1,0 +1,34 @@
+name: render
+on:
+  workflow_dispatch:
+    inputs:
+      project: {description: "project folder (e.g. croc)", required: true}
+      tag: {description: "release tag to upload chunks to", required: true}
+      jobs: {description: 'JSON list of {"name","mod","start","end"}', required: true}
+permissions:
+  contents: write
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        job: ${{ fromJSON(inputs.jobs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libcairo2 >/dev/null
+          pip install -q cairocffi numpy fonttools pillow opencv-python-headless scipy
+      - name: render
+        working-directory: ${{ inputs.project }}
+        run: |
+          mkdir -p out
+          python -m engine.render ${{ matrix.job.mod }} out/${{ matrix.job.name }}.mp4 --scale 1 --jobs $(nproc) \
+            --words audio/words.json --start ${{ matrix.job.start }} --end ${{ matrix.job.end }}
+          ffprobe -v error -show_entries format=duration -of csv=p=0 out/${{ matrix.job.name }}.mp4
+      - name: upload
+        working-directory: ${{ inputs.project }}
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh release upload "${{ inputs.tag }}" out/${{ matrix.job.name }}.mp4 --clobber
